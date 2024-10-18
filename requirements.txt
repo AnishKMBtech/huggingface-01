@@ -1,7 +1,5 @@
 streamlit
-opencv-python-headless
-numpy
-easyocr
-Pillow
-google-generativeai
-streamlit-chat
+langchain
+langchain-groq
+faiss-cpu
+sentence-transformers
