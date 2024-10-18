@@ -1,46 +1,93 @@
-import easyocr as ocr  #OCR
-import streamlit as st  #Web App
-from PIL import Image #Image Processing
-import numpy as np #Image Processing 
+import streamlit as st
+import google.generativeai as genai
+import os
+from streamlit_chat import message
 
-#title
-st.title("Easy OCR - Extract Text from Images")
+# Set up Gemini API
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-#subtitle
-st.markdown("## Optical Character Recognition - Using `easyocr`, `streamlit` -  hosted on 🤗 Spaces")
+# Function to get response from Gemini
+def get_bot_response(prompt, history):
+    # Convert history to the format Gemini expects
+    gemini_history = [
+        {"role": "user" if msg["role"] == "human" else "model", "parts": [msg["content"]]}
+        for msg in history
+    ]
+    
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        chat = model.start_chat(history=gemini_history)
+        response = chat.send_message(prompt)
+        return response.text
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
 
+# Set page config
+st.set_page_config(page_title="AI Chatbot", page_icon="🤖", layout="wide")
 
-#image uploader
-image = st.file_uploader(label = "Upload your image here",type=['png','jpg','jpeg'])
+# Custom CSS for Claude-like UI
+st.markdown("""
+<style>
+    .stApp {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    .stTextInput > div > div > input {
+        caret-color: #9D5CFF;
+    }
+    .stButton > button {
+        background-color: #9D5CFF;
+        color: white;
+    }
+    .stButton > button:hover {
+        background-color: #7B3FCC;
+    }
+</style>
+""", unsafe_allow_html=True)
 
+# Sidebar
+with st.sidebar:
+    st.title("About")
+    st.info("This chatbot uses Google's Gemini model to generate responses.")
+    data_link = "https://huggingface.co/datasets/your_dataset"
+    st.markdown(f"[Link to the dataset]({data_link})")
 
-@st.cache
-def load_model(): 
-    reader = ocr.Reader(['en'],model_storage_directory='.')
-    return reader 
+# Main content
+st.title("AI Chatbot")
 
-reader = load_model() #load model
+# Initialize chat history
+if 'history' not in st.session_state:
+    st.session_state['history'] = []
 
-if image is not None:
+# Display chat messages
+for i, chat in enumerate(st.session_state['history']):
+    if chat['role'] == 'human':
+        message(chat['content'], is_user=True, key=f"{i}_user")
+    else:
+        message(chat['content'], is_user=False, key=f"{i}_bot")
 
-    input_image = Image.open(image) #read image
-    st.image(input_image) #display image
+# Chat input
+with st.container():
+    user_input = st.text_input("You:", key="user_input")
+    send_button = st.button("Send")
 
-    with st.spinner("🤖 AI is at Work! "):
-        
+if send_button and user_input:
+    # Add user input to history
+    st.session_state['history'].append({"role": "human", "content": user_input})
+    
+    # Get bot response
+    bot_response = get_bot_response(user_input, st.session_state['history'])
+    
+    # Add bot response to history
+    st.session_state['history'].append({"role": "ai", "content": bot_response})
+    
+    # Clear input
+    st.session_state['user_input'] = ""
+    
+    # Rerun to update chat display
+    st.experimental_rerun()
 
-        result = reader.readtext(np.array(input_image))
-
-        result_text = [] #empty list for results
-
-
-        for text in result:
-            result_text.append(text[1])
-
-        st.write(result_text)
-    #st.success("Here you go!")
-    st.balloons()
-else:
-    st.write("Upload an Image")
-
-st.caption("not owned by me only test")
+# Clear chat button
+if st.button("Clear Chat"):
+    st.session_state['history'] = []
+    st.experimental_rerun()
