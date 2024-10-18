@@ -1,93 +1,84 @@
 import streamlit as st
-import google.generativeai as genai
 import os
-from streamlit_chat import message
+from langchain_groq import ChatGroq
+from langchain.chains import ConversationalRetrievalChain
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.text_splitter import CharacterTextSplitter
+from langchain_community.document_loaders import WebBaseLoader
 
-# Set up Gemini API
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# Set your Groq API key
+os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
-# Function to get response from Gemini
-def get_bot_response(prompt, history):
-    # Convert history to the format Gemini expects
-    gemini_history = [
-        {"role": "user" if msg["role"] == "human" else "model", "parts": [msg["content"]]}
-        for msg in history
-    ]
-    
-    try:
-        model = genai.GenerativeModel('gemini-pro')
-        chat = model.start_chat(history=gemini_history)
-        response = chat.send_message(prompt)
-        return response.text
-    except Exception as e:
-        return f"An error occurred: {str(e)}"
+# Set up the Groq LLM
+llm = ChatGroq(model_name="mixtral-8x7b-32768", temperature=0.7)
 
-# Set page config
+# Define your custom data source URL
+DATA_URL = "https://en.wikipedia.org/wiki/AlexNet"
+
+# Function to load and process data from the web page
+@st.cache_resource
+def load_data(url):
+    loader = WebBaseLoader(url)
+    documents = loader.load()
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+    texts = text_splitter.split_documents(documents)
+    return texts
+
+# Set up the retrieval system
+@st.cache_resource
+def setup_retrieval_system():
+    texts = load_data(DATA_URL)
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectorstore = FAISS.from_documents(texts, embeddings)
+    return vectorstore
+
+# Create the conversational chain
+@st.cache_resource
+def create_qa_chain(_vectorstore):
+    return ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=_vectorstore.as_retriever(),
+        return_source_documents=True
+    )
+
+# Streamlit UI setup
 st.set_page_config(page_title="AI Chatbot", page_icon="🤖", layout="wide")
-
-# Custom CSS for Claude-like UI
-st.markdown("""
-<style>
-    .stApp {
-        max-width: 1200px;
-        margin: 0 auto;
-    }
-    .stTextInput > div > div > input {
-        caret-color: #9D5CFF;
-    }
-    .stButton > button {
-        background-color: #9D5CFF;
-        color: white;
-    }
-    .stButton > button:hover {
-        background-color: #7B3FCC;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.title("AI Chatbot powered by Groq and LangChain")
 
 # Sidebar
 with st.sidebar:
     st.title("About")
-    st.info("This chatbot uses Google's Gemini model to generate responses.")
-    data_link = "https://huggingface.co/datasets/your_dataset"
-    st.markdown(f"[Link to the dataset]({data_link})")
+    st.info("This chatbot uses Groq's Mixtral model and LangChain for document retrieval and Q&A.")
+    st.markdown(f"[Data source]({DATA_URL})")
 
-# Main content
-st.title("AI Chatbot")
+# Initialize session state
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
 
-# Initialize chat history
-if 'history' not in st.session_state:
-    st.session_state['history'] = []
+# Setup retrieval system and QA chain
+vectorstore = setup_retrieval_system()
+qa_chain = create_qa_chain(vectorstore)
 
-# Display chat messages
-for i, chat in enumerate(st.session_state['history']):
-    if chat['role'] == 'human':
-        message(chat['content'], is_user=True, key=f"{i}_user")
-    else:
-        message(chat['content'], is_user=False, key=f"{i}_bot")
+# Chat interface
+for message in st.session_state.chat_history:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-# Chat input
-with st.container():
-    user_input = st.text_input("You:", key="user_input")
-    send_button = st.button("Send")
+# User input
+if prompt := st.chat_input("You:"):
+    st.session_state.chat_history.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-if send_button and user_input:
-    # Add user input to history
-    st.session_state['history'].append({"role": "human", "content": user_input})
-    
-    # Get bot response
-    bot_response = get_bot_response(user_input, st.session_state['history'])
-    
-    # Add bot response to history
-    st.session_state['history'].append({"role": "ai", "content": bot_response})
-    
-    # Clear input
-    st.session_state['user_input'] = ""
-    
-    # Rerun to update chat display
-    st.experimental_rerun()
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        result = qa_chain({"question": prompt, "chat_history": [(msg["role"], msg["content"]) for msg in st.session_state.chat_history]})
+        full_response = result['answer']
+        message_placeholder.markdown(full_response)
+    st.session_state.chat_history.append({"role": "assistant", "content": full_response})
 
 # Clear chat button
 if st.button("Clear Chat"):
-    st.session_state['history'] = []
+    st.session_state.chat_history = []
     st.experimental_rerun()
