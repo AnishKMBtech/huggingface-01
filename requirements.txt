@@ -3,3 +3,5 @@ opencv-python-headless
 numpy
 easyocr
 Pillow
+google-generativeai
+streamlit-chat
