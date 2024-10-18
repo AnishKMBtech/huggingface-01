@@ -1,84 +1,86 @@
-import streamlit as st
-import os
-from langchain_groq import ChatGroq
-from langchain.chains import ConversationalRetrievalChain
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
-from langchain_community.document_loaders import WebBaseLoader
 
-# Set your Groq API key
-os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
+!pip install -qq langchain wget llama-index cohere llama-cpp-python
 
-# Set up the Groq LLM
-llm = ChatGroq(model_name="mixtral-8x7b-32768", temperature=0.7)
+import wget 
 
-# Define your custom data source URL
-DATA_URL = "https://en.wikipedia.org/wiki/AlexNet"
+def bar_custom(current, total, width=80):
+    print("Downloading %d%% [%d / %d] bytes" % (current / total * 100, current, total))
 
-# Function to load and process data from the web page
-@st.cache_resource
-def load_data(url):
-    loader = WebBaseLoader(url)
-    documents = loader.load()
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-    texts = text_splitter.split_documents(documents)
-    return texts
+model_url = "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q2_K.gguf"
+wget.download(model_url, bar=bar_custom)
 
-# Set up the retrieval system
-@st.cache_resource
-def setup_retrieval_system():
-    texts = load_data(DATA_URL)
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectorstore = FAISS.from_documents(texts, embeddings)
-    return vectorstore
+!pip -q install streamlit
 
-# Create the conversational chain
-@st.cache_resource
-def create_qa_chain(_vectorstore):
-    return ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=_vectorstore.as_retriever(),
-        return_source_documents=True
-    )
+%%writefile app.py
+import streamlit as st 
+from llama_index import (
+  SimpleDirectoryReader,
+  VectorStoreIndex,
+  ServiceContext,
+)
+from llama_index.llms import LlamaCPP
+from llama_index.llms.llama_utils import (
+  messages_to_prompt,
+  completion_to_prompt,
+)
+from langchain.schema import(SystemMessage, HumanMessage, AIMessage)
 
-# Streamlit UI setup
-st.set_page_config(page_title="AI Chatbot", page_icon="🤖", layout="wide")
-st.title("AI Chatbot powered by Groq and LangChain")
+def init_page() -> None:
+  st.set_page_config(
+    page_title="Personal Chatbot"
+  )
+  st.header("Persoanl Chatbot")
+  st.sidebar.title("Options")
 
-# Sidebar
-with st.sidebar:
-    st.title("About")
-    st.info("This chatbot uses Groq's Mixtral model and LangChain for document retrieval and Q&A.")
-    st.markdown(f"[Data source]({DATA_URL})")
+def select_llm() -> LlamaCPP:
+  return LlamaCPP(
+    model_path="/content/llama-2-7b-chat.Q2_K.gguf",
+    temperature=0.1,
+    max_new_tokens=500,
+    context_window=3900,
+    generate_kwargs={},
+    model_kwargs={"n_gpu_layers":1},
+    messages_to_prompt=messages_to_prompt,
+    completion_to_prompt=completion_to_prompt,
+    verbose=True,
+  )
 
-# Initialize session state
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
+def init_messages() -> None:
+  clear_button = st.sidebar.button("Clear Conversation", key="clear")
+  if clear_button or "messages" not in st.session_state:
+    st.session_state.messages = [
+      SystemMessage(
+        content="you are a helpful AI assistant. Reply your answer in markdown format."
+      )
+    ]
 
-# Setup retrieval system and QA chain
-vectorstore = setup_retrieval_system()
-qa_chain = create_qa_chain(vectorstore)
+def get_answer(llm, messages) -> str:
+  response = llm.complete(messages)
+  return response.text
 
-# Chat interface
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+def main() -> None:
+  init_page()
+  llm = select_llm()
+  init_messages()
 
-# User input
-if prompt := st.chat_input("You:"):
-    st.session_state.chat_history.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+  if user_input := st.chat_input("Input your question!"):
+    st.session_state.messages.append(HumanMessage(content=user_input))
+    with st.spinner("Bot is typing ..."):
+      answer = get_answer(llm, user_input)
+      print(answer)
+    st.session_state.messages.append(AIMessage(content=answer))
+    
 
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        result = qa_chain({"question": prompt, "chat_history": [(msg["role"], msg["content"]) for msg in st.session_state.chat_history]})
-        full_response = result['answer']
-        message_placeholder.markdown(full_response)
-    st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+  messages = st.session_state.get("messages", [])
+  for message in messages:
+    if isinstance(message, AIMessage):
+      with st.chat_message("assistant"):
+        st.markdown(message.content)
+    elif isinstance(message, HumanMessage):
+      with st.chat_message("user"):
+        st.markdown(message.content)
 
-# Clear chat button
-if st.button("Clear Chat"):
-    st.session_state.chat_history = []
-    st.experimental_rerun()
+if __name__ == "__main__":
+  main()
+ 
+!streamlit run app.py & npx localtunnel --port 8501
