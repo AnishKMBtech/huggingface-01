@@ -1,86 +1,53 @@
+import streamlit as st
+import cohere
 
-!pip install -qq langchain wget llama-index cohere llama-cpp-python
+# Initialize Cohere Client with your API key
+co = cohere.Client('cohere_api')  # Replace with your actual API key
 
-import wget 
-
-def bar_custom(current, total, width=80):
-    print("Downloading %d%% [%d / %d] bytes" % (current / total * 100, current, total))
-
-model_url = "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q2_K.gguf"
-wget.download(model_url, bar=bar_custom)
-
-!pip -q install streamlit
-
-%%writefile app.py
-import streamlit as st 
-from llama_index import (
-  SimpleDirectoryReader,
-  VectorStoreIndex,
-  ServiceContext,
-)
-from llama_index.llms import LlamaCPP
-from llama_index.llms.llama_utils import (
-  messages_to_prompt,
-  completion_to_prompt,
-)
-from langchain.schema import(SystemMessage, HumanMessage, AIMessage)
-
-def init_page() -> None:
-  st.set_page_config(
-    page_title="Personal Chatbot"
-  )
-  st.header("Persoanl Chatbot")
-  st.sidebar.title("Options")
-
-def select_llm() -> LlamaCPP:
-  return LlamaCPP(
-    model_path="/content/llama-2-7b-chat.Q2_K.gguf",
-    temperature=0.1,
-    max_new_tokens=500,
-    context_window=3900,
-    generate_kwargs={},
-    model_kwargs={"n_gpu_layers":1},
-    messages_to_prompt=messages_to_prompt,
-    completion_to_prompt=completion_to_prompt,
-    verbose=True,
-  )
-
-def init_messages() -> None:
-  clear_button = st.sidebar.button("Clear Conversation", key="clear")
-  if clear_button or "messages" not in st.session_state:
-    st.session_state.messages = [
-      SystemMessage(
-        content="you are a helpful AI assistant. Reply your answer in markdown format."
-      )
-    ]
-
-def get_answer(llm, messages) -> str:
-  response = llm.complete(messages)
-  return response.text
-
-def main() -> None:
-  init_page()
-  llm = select_llm()
-  init_messages()
-
-  if user_input := st.chat_input("Input your question!"):
-    st.session_state.messages.append(HumanMessage(content=user_input))
-    with st.spinner("Bot is typing ..."):
-      answer = get_answer(llm, user_input)
-      print(answer)
-    st.session_state.messages.append(AIMessage(content=answer))
+# Function to get responses from Cohere model for Q&A
+def getCohereResponse(question, chat_history):
+    # Prompt Template for Q&A
+    prompt = f"""
+    You are a helpful and knowledgeable assistant. Answer the following question based on the previous conversation:
+    {chat_history}
+    Q: {question}
+    A:
+    """
     
+    # Cohere generate API call
+    response = co.generate(
+        model='command-xlarge-nightly',
+        prompt=prompt,
+        max_tokens=100,  # Adjust based on the length of the response you want
+        temperature=0.5,  # Lower temperature for more focused answers
+        stop_sequences=["\n"],  # Stop at the end of the answer
+    )
 
-  messages = st.session_state.get("messages", [])
-  for message in messages:
-    if isinstance(message, AIMessage):
-      with st.chat_message("assistant"):
-        st.markdown(message.content)
-    elif isinstance(message, HumanMessage):
-      with st.chat_message("user"):
-        st.markdown(message.content)
+    return response.generations[0].text if response.generations else "No answer generated"
 
-if __name__ == "__main__":
-  main()
- 
-!streamlit run app.py & npx localtunnel --port 8501
+# Streamlit UI
+st.set_page_config(page_title="Conversational Q&A Chatbot", page_icon="💬")
+
+st.title("Conversational Q&A Chatbot 💬")
+
+# Initialize chat history in session state
+if 'chat_history' not in st.session_state:
+    st.session_state['chat_history'] = ""
+
+# User input
+user_question = st.text_input("Ask me anything!")
+
+# When user submits a question
+if st.button("Ask"):
+    if user_question:
+        # Get the response from Cohere
+        chat_history = st.session_state['chat_history']
+        answer = getCohereResponse(user_question, chat_history)
+        
+        # Update chat history
+        st.session_state['chat_history'] += f"Q: {user_question}\nA: {answer}\n\n"
+        
+        # Display conversation history
+        st.text_area("Conversation", st.session_state['chat_history'], height=300)
+    else:
+        st.warning("Please enter a question.")
