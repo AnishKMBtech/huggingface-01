@@ -13,7 +13,7 @@ def getCohereResponse(question, chat_history):
     Q: {question}
     A:
     """
-    
+
     # Cohere generate API call
     response = co.generate(
         model='command-xlarge-nightly',
@@ -22,13 +22,11 @@ def getCohereResponse(question, chat_history):
         temperature=0.5,  # Lower temperature for more focused answers
         stop_sequences=["\n"],  # Stop at the end of the answer
     )
-
     return response.generations[0].text if response.generations else "No answer generated"
 
 # Streamlit UI
-st.set_page_config(page_title="Conversational Q&A Chatbot", page_icon="💬")
-
-st.title("Conversational Q&A Chatbot 💬")
+st.set_page_config(page_title="Bercho - Conversational Q&A Chatbot", page_icon="🤖")
+st.title("Bercho - Conversational Q&A Chatbot 🤖")
 
 # Initialize chat history in session state
 if 'chat_history' not in st.session_state:
@@ -43,11 +41,12 @@ if st.button("Ask"):
         # Get the response from Cohere
         chat_history = st.session_state['chat_history']
         answer = getCohereResponse(user_question, chat_history)
-        
+
         # Update chat history
         st.session_state['chat_history'] += f"Q: {user_question}\nA: {answer}\n\n"
-        
+
         # Display conversation history
-        st.text_area("Conversation", st.session_state['chat_history'], height=300)
+        st.subheader("Conversation")
+        st.text_area("", st.session_state['chat_history'], height=400)
     else:
         st.warning("Please enter a question.")
